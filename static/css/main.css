@@ -1,0 +1,17 @@
+body { font-family: 'Inter', sans-serif; }
+#particles-js {
+    position: fixed; width: 100%; height: 100%;
+    background-color: #1a202c; z-index: -1;
+}
+.transition-all { transition: all 0.3s ease-in-out; }
+.glow-shadow { box-shadow: 0 0 15px rgba(59,130,246,0.5), 0 0 5px rgba(59,130,246,0.3); }
+.photo-card { transition: all 0.3s ease; }
+.photo-card:hover { transform: translateY(-2px); }
+.cropper-modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.85);
+    z-index: 100; display: flex; align-items: center; justify-content: center;
+}
+.cropper-modal-box {
+    background: #1f2937; border: 1px solid #374151; border-radius: 1rem;
+    padding: 1.5rem; max-width: 520px; width: 95%; max-height: 90vh; overflow: auto;
+}

@@ -1,6 +1,6 @@
 # 📸 Passport Photo Pro
 
-A web-based tool to generate print-ready passport photo sheets from uploaded images. Supports multiple photos, per-photo copy counts, AI background removal, image enhancement, and multi-page PDF export — all on an A4 layout at 300 DPI.
+A modular, web-based tool to generate print-ready passport photo sheets from uploaded images. Supports multiple photos, per-photo copy counts, AI background removal, image enhancement, and multi-page PDF export — all on an A4 layout at 300 DPI.
 
 ---
 
@@ -14,8 +14,7 @@ A web-based tool to generate print-ready passport photo sheets from uploaded ima
 - **A4 print layout** — photos are automatically arranged in a grid at 300 DPI
 - **Multi-page PDF** — if photos exceed one A4 page, additional pages are created automatically
 - **Advanced options** — customize photo width, height, spacing, and border size
-- **Feedback system** — built-in bug report form powered by EmailJS
-- **Animated particle background** — via Particles.js
+- **Modular Architecture** — clean separation of concerns with a dedicated service layer
 
 ---
 
@@ -25,190 +24,86 @@ A web-based tool to generate print-ready passport photo sheets from uploaded ima
 |-----------|-----------------------------------|
 | Frontend  | HTML, Tailwind CSS, Vanilla JS    |
 | Cropping  | Cropper.js                        |
-| Backend   | Python, Flask                     |
+| Backend   | Python 3.8+, Flask (Factory Pattern) |
+| Layout    | Pillow (PIL)                      |
 | Image AI  | remove.bg API, Cloudinary AI      |
-| PDF gen   | Pillow (PIL)                      |
 | Email     | EmailJS                           |
 
 ---
 
-## 📦 Prerequisites
+## 🏗️ Project Structure
 
-- Python 3.8+
-- pip
-- A [remove.bg](https://www.remove.bg/api) API key
-- A [Cloudinary](https://cloudinary.com/) account (free tier works)
+The project follows a modular Flask architecture:
+
+```text
+backgroundremover/
+├── app/
+│   ├── __init__.py         # App Factory & initialization
+│   ├── config.py           # Centralized configuration
+│   ├── exceptions.py       # Custom exception classes
+│   ├── routes.py           # Blueprint-based routing
+│   └── services/
+│       └── image_service.py # Core image processing & layout logic
+├── static/
+│   ├── css/                # Externalized Styles
+│   └── js/                 # Externalized Scripts
+├── templates/              # Cleaned HTML templates
+├── run.py                  # Direct entry point
+├── requirements.txt
+└── .env                    # Environment variables
+```
 
 ---
 
 ## 🛠️ Installation
 
-### 1. Clone the repository
-
+### 1. Clone & Navigate
 ```bash
 git clone https://github.com/your-username/passport-photo-pro.git
 cd passport-photo-pro
 ```
 
-### 2. Create a virtual environment (recommended)
-
+### 2. Environment Setup
 ```bash
 python -m venv venv
-
-# On macOS/Linux
-source venv/bin/activate
-
-# On Windows
-venv\Scripts\activate
-```
-
-### 3. Install dependencies
-
-```bash
+# Windows: venv\Scripts\activate | Unix: source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 4. Set up environment variables
-
+### 3. Configuration
 Create a `.env` file in the project root:
-
 ```env
-REMOVE_BG_API_KEY=your_remove_bg_api_key_here
-CLOUDINARY_CLOUD_NAME=your_cloud_name
-CLOUDINARY_API_KEY=your_cloudinary_api_key
-CLOUDINARY_API_SECRET=your_cloudinary_api_secret
+REMOVE_BG_API_KEY=your_key
+CLOUDINARY_CLOUD_NAME=your_name
+CLOUDINARY_API_KEY=your_key
+CLOUDINARY_API_SECRET=your_secret
 ```
 
-> ⚠️ Never commit your `.env` file. Add it to `.gitignore`.
-
-### 5. Run the app
-
+### 4. Run
 ```bash
-python app.py
+python run.py
 ```
-
-The server will start at `http://localhost:5000`.
-
----
-
-## 📁 Project Structure
-
-```
-passport-photo-pro/
-├── app.py                  # Flask backend — image processing & PDF generation
-├── requirements.txt        # Python dependencies
-├── .env                    # Environment variables (not committed)
-├── templates/
-│   └── index.html          # Frontend UI
-└── README.md
-```
-
----
-
-## 📋 requirements.txt
-
-Make sure your `requirements.txt` includes:
-
-```
-flask
-pillow
-requests
-python-dotenv
-cloudinary
-```
-
-Generate it automatically with:
-
-```bash
-pip freeze > requirements.txt
-```
+Visit `http://localhost:5000`
 
 ---
 
 ## 🖼️ How It Works
 
-### Upload
-- Open the app in your browser at `http://localhost:5000`
-- Drag and drop one or more photos onto the upload zone, or click to browse
-- Each photo appears as a card with a thumbnail
-
-### Crop (Optional but Recommended)
-- Click **Crop** on any photo card
-- A modal cropper opens with a fixed passport aspect ratio (384×472)
-- Adjust the crop area and click **Crop & Save**
-
-### Set Copies
-- Each photo card has a **Copies** input (default: 6)
-- Change it per photo to control how many times it appears on the sheet
-
-### Advanced Options (Optional)
-- Click **Advanced Options** to customize:
-  - **Width / Height** — passport photo dimensions in pixels
-  - **Spacing** — gap between rows of photos
-  - **Border** — black border thickness around each photo
-
-### Generate
-- Click **Generate Sheet**
-- The backend processes each photo:
-  1. Removes the background via remove.bg
-  2. Uploads to Cloudinary and applies AI restoration
-  3. Resizes and adds a border
-- All photos are arranged on A4 pages (2480×3508 px at 300 DPI)
-- If photos overflow one page, new pages are added automatically
-
-### Download
-- Once generated, a PDF preview appears in the browser
-- Click **Download PDF** to save the print-ready file
+1. **Upload**: Drag & drop images. They appear as editable cards.
+2. **Crop**: Use the built-in cropper to fix aspect ratios.
+3. **Configure**: Set copy counts and advanced layout settings (margins, borders).
+4. **Process**: The backend removes backgrounds (Remove.bg), restores quality (Cloudinary), and generates a high-resolution A4 PDF.
+5. **Download**: Preview the PDF in-browser and download for printing.
 
 ---
 
-## ⚙️ API Endpoints
+## ⚙️ API Reference
 
-| Method | Route      | Description                          |
-|--------|------------|--------------------------------------|
-| GET    | `/`        | Serves the frontend UI               |
-| POST   | `/process` | Accepts images, returns a PDF stream |
-
-### `/process` Form Data
-
-| Field       | Type    | Description                              |
-|-------------|---------|------------------------------------------|
-| `image_0`   | File    | First uploaded image                     |
-| `copies_0`  | Integer | Number of copies for image 0             |
-| `image_1`   | File    | Second uploaded image (if any)           |
-| `copies_1`  | Integer | Number of copies for image 1             |
-| `width`     | Integer | Passport photo width in px (default 400) |
-| `height`    | Integer | Passport photo height in px (default 400)|
-| `spacing`   | Integer | Row spacing in px (default 25)           |
-| `border`    | Integer | Border size in px (default 2)            |
-
----
-
-## 🔐 Environment Variables Reference
-
-| Variable                | Description                          |
-|-------------------------|--------------------------------------|
-| `REMOVE_BG_API_KEY`     | API key from remove.bg               |
-| `CLOUDINARY_CLOUD_NAME` | Your Cloudinary cloud name           |
-| `CLOUDINARY_API_KEY`    | Cloudinary API key                   |
-| `CLOUDINARY_API_SECRET` | Cloudinary API secret                |
-
----
-
-## 🐛 Known Limitations
-
-- remove.bg has a daily free-tier quota — heavy usage may return a `429` error
-- Very large images may slow down processing
-- The Cloudinary `gen_restore` transformation may not be available on all plans
-
----
-
-## 📬 Feedback & Bug Reports
-
-Use the red chat button in the bottom-right corner of the app to submit feedback or report bugs directly from the UI.
+### `POST /process`
+Main endpoint for generating the PDF sheet.
+- **Form Data**: `image_i` (File), `copies_i` (Int), `width`, `height`, `spacing`, `border`.
 
 ---
 
 ## 📄 License
-
-MIT License. See `LICENSE` for details.
+MIT License.
