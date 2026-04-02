@@ -2,80 +2,68 @@ import requests
 import cloudinary
 import cloudinary.uploader
 import cloudinary.utils
-from PIL import Image, ImageOps
+import logging
+from PIL import Image
 from io import BytesIO
+from abc import ABC, abstractmethod
 from app.config import config
-from app.exceptions import APIError, QuotaExceededError, FaceDetectionError, ImageProcessingError
+from app.exceptions import APIError, QuotaExceededError, FaceDetectionError
 
-class ImageService:
+logger = logging.getLogger(__name__)
+
+class ProcessStep(ABC):
+    """
+    Abstract base class for an image processing step in the pipeline.
+    
+    Subclasses must implement the `process` method to perform specific 
+    transformations on an Image object.
+    """
+    @abstractmethod
+    def process(self, img: Image.Image) -> Image.Image:
+        """
+        Processes the input image and returns the transformed result.
+        
+        Args:
+            img (PIL.Image.Image): The input image to process.
+            
+        Returns:
+            PIL.Image.Image: The processed image.
+        """
+        pass
+
     @staticmethod
     def ensure_rgb(img: Image.Image) -> Image.Image:
-        """Converts an image to RGB, handling transparency by pasting on a white background."""
+        """
+        Converts an image to RGB mode, handling transparency gracefully.
+        
+        If the image is in RA/LA mode, it pastes the image onto a white 
+        background to preserve visual consistency after transparency is removed.
+        
+        Args:
+            img (PIL.Image.Image): The input image.
+            
+        Returns:
+            PIL.Image.Image: The RGB converted image.
+        """
         if img.mode in ("RGBA", "LA"):
             background = Image.new("RGB", img.size, (255, 255, 255))
             background.paste(img, mask=img.split()[-1])
             return background
         return img.convert("RGB")
 
-    @classmethod
-    def remove_background(cls, input_image_bytes: bytes) -> Image.Image:
-        """Calls Remove.bg API to remove background."""
-        response = requests.post(
-            "https://api.remove.bg/v1.0/removebg",
-            files={"image_file": input_image_bytes},
-            data={"size": "auto"},
-            headers={"X-Api-Key": config.REMOVE_BG_API_KEY},
-        )
-
-        if response.status_code != 200:
-            cls._handle_api_error(response, "bg_removal")
-
-        img = Image.open(BytesIO(response.content))
-        return cls.ensure_rgb(img)
-
-    @classmethod
-    def enhance_image(cls, img: Image.Image) -> Image.Image:
-        """Uploads to Cloudinary for AI enhancement and returns result."""
-        cloudinary.config(
-            cloud_name=config.CLOUDINARY_CLOUD_NAME,
-            api_key=config.CLOUDINARY_API_KEY,
-            api_secret=config.CLOUDINARY_API_SECRET,
-        )
+    def _handle_api_error(self, response, context):
+        """
+        Standardizes error handling for external API calls.
         
-        buffer = BytesIO()
-        img.save(buffer, format="PNG")
-        buffer.seek(0)
-        
-        upload_result = cloudinary.uploader.upload(buffer, resource_type="image")
-        public_id = upload_result.get("public_id")
-        image_url = upload_result.get("secure_url")
-
-        if not image_url:
-            raise APIError("Cloudinary upload failed", status_code=500, error_code="cloudinary_upload_failed")
-
-        # Step 3: Enhance via Cloudinary AI
-        enhanced_url = cloudinary.utils.cloudinary_url(
-            public_id,
-            transformation=[
-                {"effect": "gen_restore"},
-                {"quality": "auto"},
-                {"fetch_format": "auto"},
-            ],
-        )[0]
-
-        enhanced_img_data = requests.get(enhanced_url).content
-        enhanced_img = Image.open(BytesIO(enhanced_img_data))
-        return cls.ensure_rgb(enhanced_img)
-
-    @classmethod
-    def process_single_image(cls, img_bytes: bytes) -> Image.Image:
-        """Full pipeline: removal + enhancement."""
-        img = cls.remove_background(img_bytes)
-        img = cls.enhance_image(img)
-        return img
-
-    @staticmethod
-    def _handle_api_error(response, context):
+        Args:
+            response (requests.Response): The response from the external API.
+            context (str): A description of the operation (e.g., "bg_removal").
+            
+        Raises:
+            QuotaExceededError: If the API returns a 429 status.
+            FaceDetectionError: If a face could not be detected in the image.
+            APIError: For other non-200 API responses.
+        """
         try:
             error_info = response.json()
             error_msg = error_info.get("errors", [{}])[0].get("message", "unknown_error")
@@ -92,54 +80,136 @@ class ImageService:
                 raise
             raise APIError(f"{context} unknown error", status_code=response.status_code)
 
-    @staticmethod
-    def create_pdf_sheet(passport_images_with_copies, width, height, spacing, border):
-        """Creates an A4 PDF sheet from processed images."""
-        a4_w, a4_h = config.A4_WIDTH, config.A4_HEIGHT
-        margin_x, margin_y = config.MARGIN_X, config.MARGIN_Y
-        horizontal_gap = config.HORIZONTAL_GAP
+class BackgroundRemovalStep(ProcessStep):
+    """
+    Step that utilizes the Remove.bg API to isolate the subject from the background.
+    """
+    def __init__(self, api_key=config.REMOVE_BG_API_KEY):
+        """
+        Initializes the step with a Remove.bg API key.
+        """
+        self.api_key = api_key
 
-        paste_w = width + 2 * border
-        paste_h = height + 2 * border
-
-        pages = []
-        current_page = Image.new("RGB", (a4_w, a4_h), "white")
-        x, y = margin_x, margin_y
-
-        def new_page():
-            nonlocal current_page, x, y
-            pages.append(current_page)
-            current_page = Image.new("RGB", (a4_w, a4_h), "white")
-            x, y = margin_x, margin_y
-
-        for img, copies in passport_images_with_copies:
-            # Resize and add border here to keep the service method clean
-            img = img.resize((width, height), Image.LANCZOS)
-            img = ImageOps.expand(img, border=border, fill="black")
-            
-            for _ in range(copies):
-                if x + paste_w > a4_w - margin_x:
-                    x = margin_x
-                    y += paste_h + spacing
-
-                if y + paste_h > a4_h - margin_y:
-                    new_page()
-
-                current_page.paste(img, (x, y))
-                x += paste_w + horizontal_gap
-
-        pages.append(current_page)
+    def process(self, img: Image.Image) -> Image.Image:
+        """
+        Performs background removal using the Remove.bg service.
         
-        output = BytesIO()
-        if len(pages) == 1:
-            pages[0].save(output, format="PDF", dpi=(config.DEFAULT_DPI, config.DEFAULT_DPI))
-        else:
-            pages[0].save(
-                output,
-                format="PDF",
-                dpi=(config.DEFAULT_DPI, config.DEFAULT_DPI),
-                save_all=True,
-                append_images=pages[1:],
+        If the service is not configured (missing API key), it logs a warning 
+         and returns the original image.
+        """
+        if not config.HAS_REMOVE_BG:
+            logger.warning("Background removal skipped: REMOVE_BG_API_KEY not configured.")
+            return img
+
+        with BytesIO() as buffer:
+            img.save(buffer, format="PNG")
+            buffer.seek(0)
+
+            response = requests.post(
+                "https://api.remove.bg/v1.0/removebg",
+                files={"image_file": buffer},
+                data={"size": "auto"},
+                headers={"X-Api-Key": self.api_key},
             )
-        output.seek(0)
-        return output
+
+        if response.status_code != 200:
+            self._handle_api_error(response, "bg_removal")
+
+        with Image.open(BytesIO(response.content)) as result_img:
+            return self.ensure_rgb(result_img)
+
+class EnhancementStep(ProcessStep):
+    """
+    Step that utilizes Cloudinary's AI 'gen_restore' effect to enhance image quality.
+    """
+    def __init__(self, 
+                 cloud_name=config.CLOUDINARY_CLOUD_NAME,
+                 api_key=config.CLOUDINARY_API_KEY,
+                 api_secret=config.CLOUDINARY_API_SECRET):
+        """
+        Initializes the step with Cloudinary credentials.
+        """
+        self.config = {
+            "cloud_name": cloud_name,
+            "api_key": api_key,
+            "api_secret": api_secret
+        }
+
+    def process(self, img: Image.Image) -> Image.Image:
+        """
+        Uploads the image to Cloudinary, applies AI enhancement, and returns the result.
+        
+        If Cloudinary is not configured, it logs a warning and returns the original image.
+        """
+        if not config.HAS_CLOUDINARY:
+            logger.warning("Image enhancement skipped: Cloudinary keys not configured.")
+            return img
+
+        cloudinary.config(**self.config)
+        
+        with BytesIO() as buffer:
+            img.save(buffer, format="PNG")
+            buffer.seek(0)
+            
+            upload_result = cloudinary.uploader.upload(buffer, resource_type="image")
+            
+        public_id = upload_result.get("public_id")
+        image_url = upload_result.get("secure_url")
+
+        if not image_url:
+            raise APIError("Cloudinary upload failed", status_code=500, error_code="cloudinary_upload_failed")
+
+        enhanced_url = cloudinary.utils.cloudinary_url(
+            public_id,
+            transformation=[
+                {"effect": "gen_restore"},
+                {"quality": "auto"},
+                {"fetch_format": "auto"},
+            ],
+        )[0]
+
+        enhanced_img_data = requests.get(enhanced_url).content
+        with Image.open(BytesIO(enhanced_img_data)) as enhanced_img:
+            return self.ensure_rgb(enhanced_img)
+
+class ImageService:
+    """
+    Orchestrates the image processing pipeline by running an image through 
+    successive transformation steps.
+    """
+    
+    def __init__(self, steps=None):
+        """
+        Initializes the service with a list of processing steps.
+        
+        If no steps are provided, it defaults to a standard pipeline of 
+        background removal followed by AI enhancement.
+        """
+        if steps is None:
+            self.steps = [
+                BackgroundRemovalStep(),
+                EnhancementStep()
+            ]
+        else:
+            self.steps = steps
+
+    def process_single_image(self, img_bytes: bytes) -> Image.Image:
+        """
+        Executes the full processing pipeline on raw image bytes.
+        
+        Args:
+            img_bytes (bytes): The raw bytes of the uploaded image.
+            
+        Returns:
+            PIL.Image.Image: The fully processed, RGB-converted image.
+        """
+        with Image.open(BytesIO(img_bytes)) as img:
+            # Ensure initial RGB conversion if needed
+            if img.mode not in ("RGB", "RGBA"):
+                img = self.steps[0].ensure_rgb(img) if self.steps else img.convert("RGB")
+
+            processed_img = img
+            for step in self.steps:
+                processed_img = step.process(processed_img)
+            
+            return processed_img
