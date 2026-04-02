@@ -1,66 +1,70 @@
-from flask import Blueprint, render_template, request, send_file, jsonify
-from app.services.image_service import ImageService
+"""
+Main routing logic for the Passport Photo Pro application.
+Handles incoming user requests for image processing and sheet generation.
+"""
+
+from flask import Blueprint, render_template, request, send_file, jsonify, current_app
 from app.exceptions import AppError
+from app.utils.validators import RequestValidator
 import logging
 
+# Define the main blueprint
 main_bp = Blueprint("main", __name__)
 logger = logging.getLogger(__name__)
 
 @main_bp.route("/")
 def index():
+    """Renders the main application UI."""
     return render_template("index.html")
 
 @main_bp.route("/process", methods=["POST"])
 def process():
+    """
+    Main endpoint for photo processing and A4 sheet generation.
+    
+    1. Validates incoming form parameters and image files.
+    2. Runs each image through the enhancement pipeline.
+    3. Generates a high-resolution A4 PDF document.
+    
+    Returns:
+        Response: A binary PDF file for download or a JSON error object.
+    """
     logger.info("Processing image request")
     
     try:
-        # Layout settings
-        width = int(request.form.get("width", 390))
-        height = int(request.form.get("height", 480))
-        border = int(request.form.get("border", 2))
-        spacing = int(request.form.get("spacing", 10))
+        # Phase 3: Input Validation
+        # Safely parse and validate form data/files
+        validated = RequestValidator.validate_process_request(request.form, request.files)
         
-        images_data = []
-        # Multi-image mode
-        i = 0
-        while f"image_{i}" in request.files:
-            file = request.files[f"image_{i}"]
-            copies = int(request.form.get(f"copies_{i}", 6))
-            images_data.append((file.read(), copies))
-            i += 1
-
-        # Fallback to single image mode
-        if not images_data and "image" in request.files:
-            file = request.files["image"]
-            copies = int(request.form.get("copies", 6))
-            images_data.append((file.read(), copies))
-
-        if not images_data:
-            return jsonify({"error": "no_image_uploaded"}), 400
-
         passport_images = []
-        for idx, (img_bytes, copies) in enumerate(images_data):
-            logger.debug(f"Processing image {idx + 1}")
-            # The service handles removal and enhancement
-            img = ImageService.process_single_image(img_bytes)
-            passport_images.append((img, copies))
+        for img_file, copies in validated['images_data']:
+            logger.debug(f"Processing image: {img_file.filename}")
+            
+            # The service handles removal and enhancement through the pipeline
+            # Note: The raw bytes are read here, ensure the image service closes its internal handles
+            img_bytes = img_file.read()
+            processed_img = current_app.image_service.process_single_image(img_bytes)
+            passport_images.append((processed_img, copies))
 
-        # Generate the PDF
-        pdf_output = ImageService.create_pdf_sheet(
-            passport_images, width, height, spacing, border
+        # Generate the PDF using the dedicated generator
+        pdf_output = current_app.pdf_generator.create_pdf_sheet(
+            passport_images, 
+            validated['width'], 
+            validated['height'], 
+            validated['spacing'], 
+            validated['border']
         )
 
         return send_file(
             pdf_output,
             mimetype="application/pdf",
             as_attachment=True,
-            download_name="passport-sheet.pdf",
+            download_name="passport-sheet.pdf"
         )
 
     except AppError as e:
-        logger.warning(f"Application error: {e.message}")
+        logger.warning(f"Application error: {e.message} (Code: {e.error_code})")
         return jsonify({"error": e.error_code, "message": e.message}), e.status_code
     except Exception as e:
         logger.exception("Unexpected error during processing")
-        return jsonify({"error": "internal_error", "message": str(e)}), 500
+        return jsonify({"error": "internal_error", "message": "An unexpected server error occurred."}), 500
