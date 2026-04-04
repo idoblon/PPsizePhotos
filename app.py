@@ -1,6 +1,8 @@
 from app import create_app
 
+# The app object must be named 'app' for Vercel to find it automatically.
 app = create_app()
 
 if __name__ == "__main__":
+    # Local development server
     app.run(host="0.0.0.0", port=5000)
