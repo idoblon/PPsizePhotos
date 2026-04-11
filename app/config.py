@@ -1,8 +1,16 @@
 import os
-from dotenv import load_dotenv
+import logging
+from pathlib import Path
 
-# Load variables from .env if it exists
-load_dotenv()
+# Load variables from .env if it exists in the project root
+env_path = Path(__file__).parent.parent / '.env'
+load_dotenv(dotenv_path=env_path)
+
+logger = logging.getLogger(__name__)
+if env_path.exists():
+    logger.info(f"Loaded environment from {env_path}")
+else:
+    logger.warning(f"Environment file not found at {env_path}")
 
 class Config:
     """

@@ -98,8 +98,10 @@ class BackgroundRemovalStep(ProcessStep):
          and returns the original image.
         """
         if not config.HAS_REMOVE_BG:
-            logger.warning("Background removal skipped: REMOVE_BG_API_KEY not configured.")
+            logger.warning(f"Background removal skipped: REMOVE_BG_API_KEY NOT found. (HAS_REMOVE_BG={config.HAS_REMOVE_BG})")
             return img
+        
+        logger.info("Executing BackgroundRemovalStep...")
 
         with BytesIO() as buffer:
             img.save(buffer, format="PNG")
