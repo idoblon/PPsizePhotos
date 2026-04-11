@@ -23,9 +23,13 @@ def status():
     from app.config import config
     return jsonify({
         "services": {
-            "remove_bg": {
+            "remove_bg_api": {
                 "enabled": config.HAS_REMOVE_BG,
                 "key_present": bool(config.REMOVE_BG_API_KEY)
+            },
+            "local_ai": {
+                "rembg_installed": True if __import__('importlib.util').util.find_spec('rembg') else False,
+                "onnx_installed": True if __import__('importlib.util').util.find_spec('onnxruntime') else False
             },
             "cloudinary": {
                 "enabled": config.HAS_CLOUDINARY,
