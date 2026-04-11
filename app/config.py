@@ -4,13 +4,14 @@ from pathlib import Path
 
 # Load variables from .env if it exists in the project root
 env_path = Path(__file__).parent.parent / '.env'
-load_dotenv(dotenv_path=env_path)
+if env_path.exists():
+    load_dotenv(dotenv_path=env_path)
 
 logger = logging.getLogger(__name__)
 if env_path.exists():
     logger.info(f"Loaded environment from {env_path}")
 else:
-    logger.warning(f"Environment file not found at {env_path}")
+    logger.info("Environment file not found; using system environment variables.")
 
 class Config:
     """
