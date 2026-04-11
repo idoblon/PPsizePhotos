@@ -214,4 +214,6 @@ class ImageService:
             for step in self.steps:
                 processed_img = step.process(processed_img)
             
-            return processed_img
+            # Ensure the image data is fully loaded and survives the context manager
+            processed_img.load()
+            return processed_img.copy()
