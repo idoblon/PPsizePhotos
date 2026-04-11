@@ -1,6 +1,7 @@
 import os
 import logging
 from pathlib import Path
+from dotenv import load_dotenv
 
 # Load variables from .env if it exists in the project root
 env_path = Path(__file__).parent.parent / '.env'
@@ -19,10 +20,18 @@ class Config:
     
     These values are shared across all environments unless overridden.
     """
-    REMOVE_BG_API_KEY = os.getenv("REMOVE_BG_API_KEY")
-    CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME")
-    CLOUDINARY_API_KEY = os.getenv("CLOUDINARY_API_KEY")
-    CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET")
+    # Sanitize inputs to prevent issues with whitespace in env variables
+    _remove_bg_key = os.getenv("REMOVE_BG_API_KEY")
+    REMOVE_BG_API_KEY = _remove_bg_key.strip() if _remove_bg_key else None
+    
+    _cloud_name = os.getenv("CLOUDINARY_CLOUD_NAME")
+    CLOUDINARY_CLOUD_NAME = _cloud_name.strip() if _cloud_name else None
+    
+    _cloud_key = os.getenv("CLOUDINARY_API_KEY")
+    CLOUDINARY_API_KEY = _cloud_key.strip() if _cloud_key else None
+    
+    _cloud_secret = os.getenv("CLOUDINARY_API_SECRET")
+    CLOUDINARY_API_SECRET = _cloud_secret.strip() if _cloud_secret else None
     
     # Feature Flags for Graceful Degradation
     HAS_REMOVE_BG = bool(REMOVE_BG_API_KEY)

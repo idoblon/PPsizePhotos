@@ -17,6 +17,26 @@ def index():
     """Renders the main application UI."""
     return render_template("index.html")
 
+@main_bp.route("/status")
+def status():
+    """Diagnostic endpoint to verify API key detection."""
+    from app.config import config
+    return jsonify({
+        "services": {
+            "remove_bg": {
+                "enabled": config.HAS_REMOVE_BG,
+                "key_present": bool(config.REMOVE_BG_API_KEY)
+            },
+            "cloudinary": {
+                "enabled": config.HAS_CLOUDINARY,
+                "cloud_name_present": bool(config.CLOUDINARY_CLOUD_NAME),
+                "api_key_present": bool(config.CLOUDINARY_API_KEY),
+                "api_secret_present": bool(config.CLOUDINARY_API_SECRET)
+            }
+        },
+        "environment": current_app.config.get("ENV", "not_set")
+    })
+
 @main_bp.route("/process", methods=["POST"])
 def process():
     """
