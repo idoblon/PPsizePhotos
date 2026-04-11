@@ -16,3 +16,6 @@ Jinja2==3.1.6
 limits==4.0.1
 markdown-it-py==3.0.0
 MarkupSafe==3.0.2
+rembg==2.0.63
+onnxruntime==1.20.1
+opencv-python-headless==4.11.0.86

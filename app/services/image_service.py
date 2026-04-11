@@ -1,3 +1,4 @@
+import os
 import requests
 import cloudinary
 import cloudinary.uploader
@@ -11,40 +12,20 @@ from app.exceptions import APIError, QuotaExceededError, FaceDetectionError
 
 logger = logging.getLogger(__name__)
 
+# Configure rembg to use /tmp for model storage (required for Vercel/Serverless)
+os.environ["U2NET_HOME"] = os.path.join("/tmp", ".u2net")
+
 class ProcessStep(ABC):
     """
     Abstract base class for an image processing step in the pipeline.
-    
-    Subclasses must implement the `process` method to perform specific 
-    transformations on an Image object.
     """
     @abstractmethod
     def process(self, img: Image.Image) -> Image.Image:
-        """
-        Processes the input image and returns the transformed result.
-        
-        Args:
-            img (PIL.Image.Image): The input image to process.
-            
-        Returns:
-            PIL.Image.Image: The processed image.
-        """
         pass
 
     @staticmethod
     def ensure_rgb(img: Image.Image) -> Image.Image:
-        """
-        Converts an image to RGB mode, handling transparency gracefully.
-        
-        If the image is in RA/LA mode, it pastes the image onto a white 
-        background to preserve visual consistency after transparency is removed.
-        
-        Args:
-            img (PIL.Image.Image): The input image.
-            
-        Returns:
-            PIL.Image.Image: The RGB converted image.
-        """
+        """Converts an image to RGB mode, handling transparency gracefully."""
         if img.mode in ("RGBA", "LA"):
             background = Image.new("RGB", img.size, (255, 255, 255))
             background.paste(img, mask=img.split()[-1])
@@ -52,18 +33,6 @@ class ProcessStep(ABC):
         return img.convert("RGB")
 
     def _handle_api_error(self, response, context):
-        """
-        Standardizes error handling for external API calls.
-        
-        Args:
-            response (requests.Response): The response from the external API.
-            context (str): A description of the operation (e.g., "bg_removal").
-            
-        Raises:
-            QuotaExceededError: If the API returns a 429 status.
-            FaceDetectionError: If a face could not be detected in the image.
-            APIError: For other non-200 API responses.
-        """
         try:
             error_info = response.json()
             error_msg = error_info.get("errors", [{}])[0].get("message", "unknown_error")
@@ -82,27 +51,26 @@ class ProcessStep(ABC):
 
 class BackgroundRemovalStep(ProcessStep):
     """
-    Step that utilizes the Remove.bg API to isolate the subject from the background.
+    Primary background removal step using Remove.bg API, 
+    with a graceful fallback to local AI if API is unavailable.
     """
     def __init__(self, api_key=config.REMOVE_BG_API_KEY):
-        """
-        Initializes the step with a Remove.bg API key.
-        """
         self.api_key = api_key
 
     def process(self, img: Image.Image) -> Image.Image:
-        """
-        Performs background removal using the Remove.bg service.
+        # 1. Try Professional API first (Highest Quality)
+        if config.HAS_REMOVE_BG:
+            try:
+                logger.info("Attempting Background Removal via Remove.bg API...")
+                return self._process_via_api(img)
+            except Exception as e:
+                logger.error(f"Remove.bg API failed: {e}. Falling back to local AI.")
         
-        If the service is not configured (missing API key), it logs a warning 
-         and returns the original image.
-        """
-        if not config.HAS_REMOVE_BG:
-            logger.warning(f"Background removal skipped: REMOVE_BG_API_KEY NOT found. (HAS_REMOVE_BG={config.HAS_REMOVE_BG})")
-            return img
-        
-        logger.info("Executing BackgroundRemovalStep...")
+        # 2. Fallback to Local AI (Autonomous & Free)
+        logger.info("Using Local AI (rembg) for background removal...")
+        return self._process_locally(img)
 
+    def _process_via_api(self, img: Image.Image) -> Image.Image:
         with BytesIO() as buffer:
             img.save(buffer, format="PNG")
             buffer.seek(0)
@@ -112,6 +80,7 @@ class BackgroundRemovalStep(ProcessStep):
                 files={"image_file": buffer},
                 data={"size": "auto"},
                 headers={"X-Api-Key": self.api_key},
+                timeout=15
             )
 
         if response.status_code != 200:
@@ -120,17 +89,28 @@ class BackgroundRemovalStep(ProcessStep):
         with Image.open(BytesIO(response.content)) as result_img:
             return self.ensure_rgb(result_img)
 
+    def _process_locally(self, img: Image.Image) -> Image.Image:
+        """Performs background removal using the rembg library."""
+        try:
+            from rembg import remove, new_session
+            
+            # Using u2netp (portable) model for better performance in serverless envs
+            session = new_session("u2netp")
+            
+            # rembg returns an RGBA image
+            result_rgba = remove(img, session=session)
+            return self.ensure_rgb(result_rgba)
+        except Exception as e:
+            logger.error(f"Local background removal failed: {e}")
+            # If everything fails, return the original RGB image as last resort
+            return self.ensure_rgb(img)
+
 class EnhancementStep(ProcessStep):
-    """
-    Step that utilizes Cloudinary's AI 'gen_restore' effect to enhance image quality.
-    """
+    """Utilizes Cloudinary's AI enhancement."""
     def __init__(self, 
                  cloud_name=config.CLOUDINARY_CLOUD_NAME,
                  api_key=config.CLOUDINARY_API_KEY,
                  api_secret=config.CLOUDINARY_API_SECRET):
-        """
-        Initializes the step with Cloudinary credentials.
-        """
         self.config = {
             "cloud_name": cloud_name,
             "api_key": api_key,
@@ -138,78 +118,45 @@ class EnhancementStep(ProcessStep):
         }
 
     def process(self, img: Image.Image) -> Image.Image:
-        """
-        Uploads the image to Cloudinary, applies AI enhancement, and returns the result.
-        
-        If Cloudinary is not configured, it logs a warning and returns the original image.
-        """
         if not config.HAS_CLOUDINARY:
-            logger.warning("Image enhancement skipped: Cloudinary keys not configured.")
+            logger.warning("Enhancement skipped: Cloudinary keys not configured.")
             return img
 
         cloudinary.config(**self.config)
-        
         with BytesIO() as buffer:
             img.save(buffer, format="PNG")
             buffer.seek(0)
-            
             upload_result = cloudinary.uploader.upload(buffer, resource_type="image")
             
         public_id = upload_result.get("public_id")
         image_url = upload_result.get("secure_url")
 
         if not image_url:
-            raise APIError("Cloudinary upload failed", status_code=500, error_code="cloudinary_upload_failed")
+            raise APIError("Cloudinary upload failed", status_code=500)
 
         enhanced_url = cloudinary.utils.cloudinary_url(
             public_id,
-            transformation=[
-                {"effect": "gen_restore"},
-                {"quality": "auto"},
-                {"fetch_format": "auto"},
-            ],
+            transformation=[{"effect": "gen_restore"}, {"quality": "auto"}]
         )[0]
 
-        enhanced_img_data = requests.get(enhanced_url).content
+        enhanced_img_data = requests.get(enhanced_url, timeout=15).content
         with Image.open(BytesIO(enhanced_img_data)) as enhanced_img:
             return self.ensure_rgb(enhanced_img)
 
 class ImageService:
-    """
-    Orchestrates the image processing pipeline by running an image through 
-    successive transformation steps.
-    """
-    
+    """Orchestrates the image processing pipeline."""
     def __init__(self, steps=None):
-        """
-        Initializes the service with a list of processing steps.
-        
-        If no steps are provided, it defaults to a standard pipeline of 
-        background removal followed by AI enhancement.
-        """
         if steps is None:
-            self.steps = [
-                BackgroundRemovalStep(),
-                EnhancementStep()
-            ]
+            self.steps = [BackgroundRemovalStep(), EnhancementStep()]
         else:
             self.steps = steps
 
     def process_single_image(self, img_bytes: bytes) -> Image.Image:
-        """
-        Executes the full processing pipeline on raw image bytes.
-        
-        Args:
-            img_bytes (bytes): The raw bytes of the uploaded image.
-            
-        Returns:
-            PIL.Image.Image: The fully processed, RGB-converted image.
-        """
         with Image.open(BytesIO(img_bytes)) as img:
-            # Ensure initial RGB conversion if needed
-            if img.mode not in ("RGB", "RGBA"):
-                img = self.steps[0].ensure_rgb(img) if self.steps else img.convert("RGB")
-
+            # Ensure fixed orientation and mode
+            from PIL import ImageOps
+            img = ImageOps.exif_transpose(img)
+            
             processed_img = img
             for step in self.steps:
                 processed_img = step.process(processed_img)
