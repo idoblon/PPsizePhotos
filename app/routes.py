@@ -6,6 +6,8 @@ Handles incoming user requests for image processing and sheet generation.
 from flask import Blueprint, render_template, request, send_file, jsonify, current_app
 from app.exceptions import AppError
 from app.utils.validators import RequestValidator
+from app import limiter
+import importlib.util
 import logging
 
 # Define the main blueprint
@@ -28,8 +30,8 @@ def status():
                 "key_present": bool(config.REMOVE_BG_API_KEY)
             },
             "local_ai": {
-                "rembg_installed": True if __import__('importlib.util').util.find_spec('rembg') else False,
-                "onnx_installed": True if __import__('importlib.util').util.find_spec('onnxruntime') else False
+                "rembg_installed": bool(importlib.util.find_spec('rembg')),
+                "onnx_installed": bool(importlib.util.find_spec('onnxruntime'))
             },
             "cloudinary": {
                 "enabled": config.HAS_CLOUDINARY,
@@ -42,6 +44,7 @@ def status():
     })
 
 @main_bp.route("/process", methods=["POST"])
+@limiter.limit("10 per minute")
 def process():
     """
     Main endpoint for photo processing and A4 sheet generation.

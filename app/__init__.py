@@ -7,9 +7,13 @@ import os
 import logging
 import cloudinary
 from flask import Flask
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from app.config import config
 from app.services.image_service import ImageService
 from app.services.pdf_generator import PDFGenerator
+
+limiter = Limiter(key_func=get_remote_address, default_limits=[])
 
 def create_app():
     """
@@ -56,6 +60,9 @@ def create_app():
     # Initialize shared services and attach to the app object for easy access
     app.image_service = ImageService()
     app.pdf_generator = PDFGenerator()
+
+    # --- Rate Limiting ---
+    limiter.init_app(app)
 
     # --- 3. Route Registration ---
     from app.routes import main_bp

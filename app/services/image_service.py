@@ -35,25 +35,26 @@ class ProcessStep(ABC):
     def _handle_api_error(self, response, context):
         try:
             error_info = response.json()
-            error_msg = error_info.get("errors", [{}])[0].get("message", "unknown_error")
-            error_code = error_info.get("errors", [{}])[0].get("code", "unknown_error")
-            
-            if response.status_code == 429:
-                raise QuotaExceededError(f"{context} quota exceeded: {error_msg}")
-            if response.status_code == 410 or "face" in error_msg.lower():
-                raise FaceDetectionError(f"{context} face detection failed: {error_msg}")
-            
-            raise APIError(f"{context} failed: {error_msg}", status_code=response.status_code, error_code=error_code)
-        except Exception as e:
-            if isinstance(e, (QuotaExceededError, FaceDetectionError, APIError)):
-                raise
-            raise APIError(f"{context} unknown error", status_code=response.status_code)
+        except Exception:
+            raise APIError(f"{context} failed with status {response.status_code}", status_code=response.status_code)
+
+        error_msg = error_info.get("errors", [{}])[0].get("message", "unknown_error")
+        error_code = error_info.get("errors", [{}])[0].get("code", "unknown_error")
+
+        if response.status_code == 429:
+            raise QuotaExceededError(f"{context} quota exceeded: {error_msg}")
+        if response.status_code == 410 or "face" in error_msg.lower():
+            raise FaceDetectionError(f"{context} face detection failed: {error_msg}")
+
+        raise APIError(f"{context} failed: {error_msg}", status_code=response.status_code, error_code=error_code)
 
 class BackgroundRemovalStep(ProcessStep):
     """
-    Primary background removal step using Remove.bg API, 
+    Primary background removal step using Remove.bg API,
     with a graceful fallback to local AI if API is unavailable.
     """
+    _rembg_session = None
+
     def __init__(self, api_key=config.REMOVE_BG_API_KEY):
         self.api_key = api_key
 
@@ -93,16 +94,15 @@ class BackgroundRemovalStep(ProcessStep):
         """Performs background removal using the rembg library."""
         try:
             from rembg import remove, new_session
-            
-            # Using u2netp (portable) model for better performance in serverless envs
-            session = new_session("u2netp")
-            
-            # rembg returns an RGBA image
-            result_rgba = remove(img, session=session)
+
+            if BackgroundRemovalStep._rembg_session is None:
+                logger.info("Initializing rembg session (u2netp)...")
+                BackgroundRemovalStep._rembg_session = new_session("u2netp")
+
+            result_rgba = remove(img, session=BackgroundRemovalStep._rembg_session)
             return self.ensure_rgb(result_rgba)
         except Exception as e:
             logger.error(f"Local background removal failed: {e}")
-            # If everything fails, return the original RGB image as last resort
             return self.ensure_rgb(img)
 
 class EnhancementStep(ProcessStep):
@@ -122,26 +122,35 @@ class EnhancementStep(ProcessStep):
             logger.warning("Enhancement skipped: Cloudinary keys not configured.")
             return img
 
-        cloudinary.config(**self.config)
-        with BytesIO() as buffer:
+        public_id = None
+        try:
+            cloudinary.config(**self.config)
+            buffer = BytesIO()
             img.save(buffer, format="PNG")
             buffer.seek(0)
             upload_result = cloudinary.uploader.upload(buffer, resource_type="image")
-            
-        public_id = upload_result.get("public_id")
-        image_url = upload_result.get("secure_url")
 
-        if not image_url:
-            raise APIError("Cloudinary upload failed", status_code=500)
+            public_id = upload_result.get("public_id")
+            if not public_id:
+                raise APIError("Cloudinary upload failed: no public_id returned", status_code=500)
 
-        enhanced_url = cloudinary.utils.cloudinary_url(
-            public_id,
-            transformation=[{"effect": "gen_restore"}, {"quality": "auto"}]
-        )[0]
+            enhanced_url = cloudinary.utils.cloudinary_url(
+                public_id,
+                transformation=[{"effect": "gen_restore"}, {"quality": "auto"}]
+            )[0]
 
-        enhanced_img_data = requests.get(enhanced_url, timeout=15).content
-        with Image.open(BytesIO(enhanced_img_data)) as enhanced_img:
-            return self.ensure_rgb(enhanced_img)
+            enhanced_img_data = requests.get(enhanced_url, timeout=15).content
+            with Image.open(BytesIO(enhanced_img_data)) as enhanced_img:
+                return self.ensure_rgb(enhanced_img)
+        except Exception as e:
+            logger.error(f"Cloudinary enhancement failed: {e}. Returning image without enhancement.")
+            return img
+        finally:
+            if public_id:
+                try:
+                    cloudinary.uploader.destroy(public_id)
+                except Exception as cleanup_err:
+                    logger.warning(f"Failed to delete Cloudinary asset '{public_id}': {cleanup_err}")
 
 class ImageService:
     """Orchestrates the image processing pipeline."""

@@ -56,39 +56,37 @@ class PDFGenerator:
             x, y = self.margin_x, self.margin_y
 
         for original_img, copies in passport_images_with_copies:
-            # Resize and add border
-            with original_img.resize((width, height), Image.LANCZOS) as resized_img:
-                with ImageOps.expand(resized_img, border=border, fill="black") as bordered_img:
-                    for _ in range(copies):
-                        # Check if we need a new row
-                        if x + paste_w > self.a4_w - self.margin_x:
-                            x = self.margin_x
-                            y += paste_h + spacing
+            resized_img = original_img.resize((width, height), Image.LANCZOS)
+            bordered_img = ImageOps.expand(resized_img, border=border, fill="black")
+            resized_img.close()
+            try:
+                for _ in range(copies):
+                    if x + paste_w > self.a4_w - self.margin_x:
+                        x = self.margin_x
+                        y += paste_h + spacing
 
-                        # Check if we need a new page
-                        if y + paste_h > self.a4_h - self.margin_y:
-                            new_page()
+                    if y + paste_h > self.a4_h - self.margin_y:
+                        new_page()
 
-                        current_page.paste(bordered_img, (x, y))
-                        x += paste_w + self.horizontal_gap
+                    current_page.paste(bordered_img, (x, y))
+                    x += paste_w + self.horizontal_gap
+            finally:
+                bordered_img.close()
 
         pages.append(current_page)
-        
+
         output = BytesIO()
-        try:
-            if len(pages) == 1:
-                pages[0].save(output, format="PDF", dpi=(self.dpi, self.dpi))
-            else:
-                pages[0].save(
-                    output,
-                    format="PDF",
-                    dpi=(self.dpi, self.dpi),
-                    save_all=True,
-                    append_images=pages[1:],
-                )
-            output.seek(0)
-            return output
-        finally:
-            # Explicitly cleanup page images
-            for page in pages:
-                page.close()
+        if len(pages) == 1:
+            pages[0].save(output, format="PDF", dpi=(self.dpi, self.dpi))
+        else:
+            pages[0].save(
+                output,
+                format="PDF",
+                dpi=(self.dpi, self.dpi),
+                save_all=True,
+                append_images=pages[1:],
+            )
+        output.seek(0)
+        for page in pages:
+            page.close()
+        return output

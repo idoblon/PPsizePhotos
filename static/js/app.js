@@ -1,4 +1,3 @@
-emailjs.init("XJqjmVHK4ISEX0Zam");
 
 particlesJS('particles-js', {
     particles: {
@@ -21,6 +20,7 @@ let photos = [];
 let nextId = 0;
 let activeCropper = null;
 let pendingCropId = null;
+let currentPdfUrl = null;
 
 // DOM refs
 const dropZone = document.getElementById('dropZone');
@@ -40,10 +40,6 @@ const confirmCropBtn = document.getElementById('confirmCropBtn');
 const cancelCropBtn = document.getElementById('cancelCropBtn');
 const notification = document.getElementById('notification');
 const notifMsg = document.getElementById('notification-message');
-const feedbackBtn = document.getElementById('feedbackBtn');
-const feedbackModal = document.getElementById('feedbackModal');
-const closeModal = document.getElementById('closeModal');
-const feedbackForm = document.getElementById('feedbackForm');
 
 // ---- Notifications ----
 function showNotification(msg, isError = true) {
@@ -103,6 +99,8 @@ function renderPhotoList() {
     photoList.querySelectorAll('.remove-btn').forEach(btn => {
         btn.addEventListener('click', e => {
             const id = parseInt(e.target.dataset.id);
+            const photo = photos.find(p => p.id === id);
+            if (photo) URL.revokeObjectURL(photo.previewUrl);
             photos = photos.filter(p => p.id !== id);
             renderPhotoList();
             if (photos.length === 0) addMoreWrapper.classList.add('hidden');
@@ -230,13 +228,14 @@ generateBtn.addEventListener('click', () => {
         })
         .then(blob => {
             if (!blob) return;
-            const url = URL.createObjectURL(blob);
+            if (currentPdfUrl) URL.revokeObjectURL(currentPdfUrl);
+            currentPdfUrl = URL.createObjectURL(blob);
             pdfPreview.classList.remove('hidden');
-            pdfPreview.src = url;
+            pdfPreview.src = currentPdfUrl;
             downloadBtn.classList.remove('hidden');
             downloadBtn.onclick = () => {
                 const link = document.createElement('a');
-                link.href = url;
+                link.href = currentPdfUrl;
                 link.download = 'passport-sheet.pdf';
                 link.click();
             };
@@ -252,28 +251,3 @@ generateBtn.addEventListener('click', () => {
         });
 });
 
-// ---- Feedback Form ----
-feedbackBtn.addEventListener('click', () => feedbackModal.classList.remove('hidden'));
-closeModal.addEventListener('click', () => feedbackModal.classList.add('hidden'));
-feedbackForm.addEventListener('submit', e => {
-    e.preventDefault();
-    const contact = feedbackForm.contact.value.trim();
-    const message = feedbackForm.message.value.trim();
-    if (!contact || !message) { showNotification("Please fill out all fields."); return; }
-    const btn = feedbackForm.querySelector('button[type="submit"]');
-    btn.disabled = true; btn.textContent = 'Submitting...';
-    emailjs.send("service_aoewzsq", "template_hbw13lt", {
-        contact, message,
-        user_agent: navigator.userAgent,
-        time: new Date().toLocaleString()
-    }).then(() => {
-        showNotification("Feedback submitted. Thank you!", false);
-        feedbackModal.classList.add('hidden');
-        feedbackForm.reset();
-    }).catch(err => {
-        console.error(err);
-        showNotification("Failed to send feedback. Please try again.");
-    }).finally(() => {
-        btn.disabled = false; btn.textContent = 'Submit';
-    });
-});

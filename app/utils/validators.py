@@ -1,4 +1,10 @@
 from app.exceptions import ValidationError, InvalidFileTypeError
+from PIL import Image
+from io import BytesIO
+
+MAX_FILE_SIZE = 15 * 1024 * 1024  # 15 MB
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'}
+ALLOWED_PIL_FORMATS = {'PNG', 'JPEG', 'WEBP'}
 
 class RequestValidator:
     """
@@ -40,29 +46,32 @@ class RequestValidator:
 
     @staticmethod
     def validate_image_file(file):
-        """
-        Validates that an uploaded file is a supported image type.
-        
-        Checks the file extension against a whitelist of expected formats.
-        
-        Args:
-            file (werkzeug.datastructures.FileStorage): The uploaded file object.
-            
-        Returns:
-            bool: True if the file is valid.
-            
-        Raises:
-            InvalidFileTypeError: If the file format is not supported.
-        """
-        ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'}
-        
         if not file or file.filename == '':
             return False
-            
+
         filename = file.filename.lower()
         if not ('.' in filename and filename.rsplit('.', 1)[1] in ALLOWED_EXTENSIONS):
             raise InvalidFileTypeError(f"File '{filename}' is not a supported image format.")
-            
+
+        # Read and verify file size + magic bytes
+        data = file.read()
+        if len(data) > MAX_FILE_SIZE:
+            raise ValidationError(
+                f"File '{filename}' exceeds the 15MB size limit.",
+                error_code="file_too_large"
+            )
+
+        try:
+            with Image.open(BytesIO(data)) as img:
+                if img.format not in ALLOWED_PIL_FORMATS:
+                    raise InvalidFileTypeError(f"File '{filename}' content does not match a supported image format.")
+        except InvalidFileTypeError:
+            raise
+        except Exception:
+            raise InvalidFileTypeError(f"File '{filename}' could not be read as a valid image.")
+
+        # Rewind so the route handler can read it again
+        file.stream = BytesIO(data)
         return True
 
     @classmethod
