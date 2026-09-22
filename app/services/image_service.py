@@ -51,18 +51,21 @@ class ProcessStep(ABC):
         except Exception:
             raise APIError(f"{context} failed with status {response.status_code}", status_code=response.status_code)
 
-        error_msg = error_info.get("errors", [{}])[0].get("message", "unknown_error")
-        error_code = error_info.get("errors", [{}])[0].get("code", "unknown_error")
+        error_entry = error_info.get("errors", [{}])[0] if isinstance(error_info.get("errors"), list) else {}
+        # remove.bg uses "title"; other APIs use "message"/"detail".
+        error_msg = error_entry.get("title") or error_entry.get("message") or error_entry.get("detail") or "unknown_error"
+        error_code = error_entry.get("code", "unknown_error")
 
         if response.status_code == 429:
             raise QuotaExceededError(f"{context} quota exceeded: {error_msg}")
         if response.status_code == 402:
             raise QuotaExceededError(f"{context} out of credits (HTTP 402): {error_msg}")
-        if response.status_code in (400, 401, 403):
-            raise APIError(f"{context} auth/param failed ({response.status_code}): {error_msg} — check API key",
+        if response.status_code in (401, 403) or error_code in ("auth_failed", "invalid_api_key"):
+            raise APIError(f"{context} auth failed ({response.status_code}): {error_msg} — check API key",
                            status_code=response.status_code, error_code=error_code)
-        if response.status_code == 410 or "face" in error_msg.lower():
-            raise FaceDetectionError(f"{context} face detection failed: {error_msg}")
+        if (response.status_code == 410 or error_code == "unknown_foreground"
+                or "face" in error_msg.lower() or "foreground" in error_msg.lower()):
+            raise FaceDetectionError(f"{context}: {error_msg}")
 
         raise APIError(f"{context} failed: {error_msg}", status_code=response.status_code, error_code=error_code)
 
@@ -92,7 +95,7 @@ class BackgroundRemovalStep(ProcessStep):
             except APIError as e:
                 # Auth / bad-request errors should surface, not fallback silently.
                 if e.status_code in (400, 401, 403):
-                    logger.error(f"Remove.bg API auth failed: {e}. Check REMOVE_BG_API_KEY.")
+                    logger.error(f"Remove.bg API request failed: {e}.")
                     raise
                 logger.warning(f"Remove.bg API failed: {e}. Falling back to local AI.")
                 _note_bg_method("local-ai-fallback")
@@ -147,7 +150,10 @@ class BackgroundRemovalStep(ProcessStep):
             response = requests.post(
                 "https://api.remove.bg/v1.0/removebg",
                 files={"image_file": ("image.png", buffer, "image/png")},
-                data={"size": "auto"},
+                # Passport app = always a person. Pinning type=person (like the
+                # remove.bg website does for portraits) gives the model a prior
+                # instead of auto-detect, and avoids product/car misfires.
+                data={"size": "auto", "type": "person"},
                 headers={"X-Api-Key": self.api_key},
                 timeout=30
             )
