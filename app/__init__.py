@@ -34,6 +34,10 @@ def create_app():
     app = Flask(__name__, 
                 template_folder=template_dir, 
                 static_folder=static_dir)
+
+    # Apply selected config object so DEBUG / custom settings take effect
+    app.config.from_object(config)
+    app.config["APP_ENV"] = os.getenv("FLASK_ENV", "production")
     
     # --- 1. Logging Setup ---
     logging.basicConfig(

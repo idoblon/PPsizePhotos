@@ -3,7 +3,7 @@ Main routing logic for the Passport Photo Pro application.
 Handles incoming user requests for image processing and sheet generation.
 """
 
-from flask import Blueprint, render_template, request, send_file, jsonify, current_app
+from flask import Blueprint, render_template, request, send_file, jsonify, current_app, g
 from app.exceptions import AppError
 from app.utils.validators import RequestValidator
 from app import limiter
@@ -40,7 +40,7 @@ def status():
                 "api_secret_present": bool(config.CLOUDINARY_API_SECRET)
             }
         },
-        "environment": current_app.config.get("ENV", "not_set")
+        "environment": current_app.config.get("APP_ENV", "not_set")
     })
 
 @main_bp.route("/process", methods=["POST"])
@@ -82,12 +82,18 @@ def process():
             validated['border']
         )
 
-        return send_file(
+        response = send_file(
             pdf_output,
             mimetype="application/pdf",
             as_attachment=True,
-            download_name="passport-sheet.pdf"
+            download_name="passport-sheet.pdf",
         )
+        # Tells the client which bg-removal engine produced this PDF:
+        # "removebg-api" (best), "local-ai", or "local-ai-fallback".
+        response.headers["X-Bg-Removal"] = (
+            ",".join(getattr(g, "bg_methods", [])) or "unknown"
+        )
+        return response
 
     except AppError as e:
         logger.warning(f"Application error: {e.message} (Code: {e.error_code})")

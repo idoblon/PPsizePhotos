@@ -191,9 +191,8 @@ cancelCropBtn.addEventListener('click', () => {
 
 // ---- UI Toggles ----
 toggleAdvanced.addEventListener('click', () => {
-    const visible = advancedOptions.style.display === 'block';
-    advancedOptions.style.display = visible ? 'none' : 'block';
-    toggleAdvanced.textContent = visible ? 'Advanced Options' : 'Hide Advanced Options';
+    const isHidden = advancedOptions.classList.toggle('hidden');
+    toggleAdvanced.textContent = isHidden ? 'Advanced Options' : 'Hide Advanced Options';
 });
 
 // ---- PDF Generation ----

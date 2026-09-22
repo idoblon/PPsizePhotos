@@ -99,7 +99,11 @@ class RequestValidator:
         i = 0
         while f"image_{i}" in files:
             img_file = files[f"image_{i}"]
-            cls.validate_image_file(img_file)
+            if not cls.validate_image_file(img_file):
+                raise ValidationError(
+                    f"File '{getattr(img_file, 'filename', '')}' is empty.",
+                    error_code="no_image_uploaded",
+                )
             
             # Limit copies per image to keep PDF sizes manageable
             copies = cls.validate_int(form_data.get(f"copies_{i}", 6), f"copies_{i}", min_val=1, max_val=54)
@@ -109,7 +113,11 @@ class RequestValidator:
         # Fallback to single image upload (legacy support)
         if not images_data and "image" in files:
             img_file = files["image"]
-            cls.validate_image_file(img_file)
+            if not cls.validate_image_file(img_file):
+                raise ValidationError(
+                    f"File '{getattr(img_file, 'filename', '')}' is empty.",
+                    error_code="no_image_uploaded",
+                )
             copies = cls.validate_int(form_data.get("copies", 6), "copies", min_val=1, max_val=54)
             images_data.append((img_file, copies))
             
