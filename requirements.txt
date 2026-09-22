@@ -1,14 +1,12 @@
 # Direct dependencies only — pip resolves transitive deps automatically.
-# NOTE: rembg + onnxruntime + opencv push Vercel serverless bundles close
-# to the 250MB limit and need a u2netp model download at runtime.
-# If Vercel builds fail on size, move background removal to an external
-# API/service or deploy on Render/Fly/VM instead.
+# NOTE: local AI fallback (rembg + onnxruntime + opencv) is intentionally
+# excluded for Vercel — it pushes the bundle over the 500MB function limit
+# and needs a model download at runtime. Background removal uses the
+# Remove.bg API in production; locally you can `pip install rembg onnxruntime`
+# to re-enable the fallback (code handles it as optional).
 Flask==3.1.1
 Flask-Limiter==3.10.1
 Pillow==11.1.0
 cloudinary==1.44.1
 requests==2.32.4
 python-dotenv==1.0.1
-rembg==2.0.63
-onnxruntime==1.20.1
-opencv-python-headless==4.11.0.86
