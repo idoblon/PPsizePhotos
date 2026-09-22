@@ -72,6 +72,10 @@ class RequestValidator:
 
         # Rewind so the route handler can read it again
         file.stream = BytesIO(data)
+        try:
+            file.seek(0)
+        except Exception:
+            pass
         return True
 
     @classmethod

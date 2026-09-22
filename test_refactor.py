@@ -17,6 +17,7 @@ class TestRefactoring(unittest.TestCase):
     def test_background_removal_step(self, mock_post):
         mock_response = MagicMock()
         mock_response.status_code = 200
+        mock_response.headers = {"Content-Type": "image/png"}
         # Return a simple white image as the result
         result_img = Image.new("RGB", (100, 100), color="white")
         buf = BytesIO()

@@ -58,6 +58,9 @@ class ProcessStep(ABC):
             raise QuotaExceededError(f"{context} quota exceeded: {error_msg}")
         if response.status_code == 402:
             raise QuotaExceededError(f"{context} out of credits (HTTP 402): {error_msg}")
+        if response.status_code in (400, 401, 403):
+            raise APIError(f"{context} auth/param failed ({response.status_code}): {error_msg} — check API key",
+                           status_code=response.status_code, error_code=error_code)
         if response.status_code == 410 or "face" in error_msg.lower():
             raise FaceDetectionError(f"{context} face detection failed: {error_msg}")
 
@@ -82,8 +85,22 @@ class BackgroundRemovalStep(ProcessStep):
                 result = self._process_via_api(img)
                 _note_bg_method("removebg-api")
                 return result
+            except (QuotaExceededError, FaceDetectionError):
+                # These are definitive — falling back to a weaker model
+                # would just hide the real problem (no credits / no face).
+                raise
+            except APIError as e:
+                # Auth / bad-request errors should surface, not fallback silently.
+                if e.status_code in (400, 401, 403):
+                    logger.error(f"Remove.bg API auth failed: {e}. Check REMOVE_BG_API_KEY.")
+                    raise
+                logger.warning(f"Remove.bg API failed: {e}. Falling back to local AI.")
+                _note_bg_method("local-ai-fallback")
+            except requests.RequestException as e:
+                logger.warning(f"Remove.bg API network error: {e}. Falling back to local AI.")
+                _note_bg_method("local-ai-fallback")
             except Exception as e:
-                logger.error(f"Remove.bg API failed: {e}. Falling back to local AI.")
+                logger.warning(f"Remove.bg API unexpected error: {e}. Falling back to local AI.")
                 _note_bg_method("local-ai-fallback")
         else:
             logger.warning("Remove.bg API key missing; using local AI only.")
@@ -116,8 +133,15 @@ class BackgroundRemovalStep(ProcessStep):
             )
 
     def _process_via_api(self, img: Image.Image) -> Image.Image:
+        # Downscale huge uploads — faster, fewer credits, same passport quality.
+        # remove.bg `size:auto` charges by MP; 1500px longest side is plenty.
+        api_img = img
+        if max(img.size) > 1500:
+            api_img = img.copy()
+            api_img.thumbnail((1500, 1500), Image.LANCZOS)
+
         with BytesIO() as buffer:
-            img.save(buffer, format="PNG")
+            api_img.save(buffer, format="PNG")
             buffer.seek(0)
 
             response = requests.post(
@@ -125,10 +149,15 @@ class BackgroundRemovalStep(ProcessStep):
                 files={"image_file": ("image.png", buffer, "image/png")},
                 data={"size": "auto"},
                 headers={"X-Api-Key": self.api_key},
-                timeout=15
+                timeout=30
             )
 
         if response.status_code != 200:
+            self._handle_api_error(response, "bg_removal")
+
+        content_type = response.headers.get("Content-Type", "")
+        if "image" not in content_type:
+            # API returned 200 but not an image (e.g. JSON error) — surface it.
             self._handle_api_error(response, "bg_removal")
 
         with Image.open(BytesIO(response.content)) as result_img:
@@ -150,7 +179,8 @@ class BackgroundRemovalStep(ProcessStep):
             self._warn_if_nothing_removed(result_rgba, "local-ai")
             return self.ensure_rgb(result_rgba)
         except Exception as e:
-            logger.error(f"Local background removal failed: {e}")
+            logger.warning(f"Local background removal failed ({e}). Returning original image.")
+            _note_bg_method("local-ai-failed")
             return self.ensure_rgb(img)
 
 class EnhancementStep(ProcessStep):
