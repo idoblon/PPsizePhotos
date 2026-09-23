@@ -88,22 +88,11 @@ class BackgroundRemovalStep(ProcessStep):
                 result = self._process_via_api(img)
                 _note_bg_method("removebg-api")
                 return result
-            except (QuotaExceededError, FaceDetectionError):
-                # These are definitive — falling back to a weaker model
-                # would just hide the real problem (no credits / no face).
+            except QuotaExceededError:
+                # Out of credits — local AI won't help, surface immediately.
                 raise
-            except APIError as e:
-                # Auth / bad-request errors should surface, not fallback silently.
-                if e.status_code in (400, 401, 403):
-                    logger.error(f"Remove.bg API request failed: {e}.")
-                    raise
-                logger.warning(f"Remove.bg API failed: {e}. Falling back to local AI.")
-                _note_bg_method("local-ai-fallback")
-            except requests.RequestException as e:
-                logger.warning(f"Remove.bg API network error: {e}. Falling back to local AI.")
-                _note_bg_method("local-ai-fallback")
             except Exception as e:
-                logger.warning(f"Remove.bg API unexpected error: {e}. Falling back to local AI.")
+                logger.warning(f"Remove.bg API failed ({type(e).__name__}: {e}). Falling back to local AI.")
                 _note_bg_method("local-ai-fallback")
         else:
             logger.warning("Remove.bg API key missing; using local AI only.")
