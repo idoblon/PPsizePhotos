@@ -46,14 +46,14 @@ class RequestValidator:
 
     @staticmethod
     def validate_image_file(file):
+        """Validates the file and returns its bytes. Raises on any error."""
         if not file or file.filename == '':
-            return False
+            return None
 
         filename = file.filename.lower()
         if not ('.' in filename and filename.rsplit('.', 1)[1] in ALLOWED_EXTENSIONS):
             raise InvalidFileTypeError(f"File '{filename}' is not a supported image format.")
 
-        # Read and verify file size + magic bytes
         data = file.read()
         if len(data) > MAX_FILE_SIZE:
             raise ValidationError(
@@ -70,13 +70,7 @@ class RequestValidator:
         except Exception:
             raise InvalidFileTypeError(f"File '{filename}' could not be read as a valid image.")
 
-        # Rewind so the route handler can read it again
-        file.stream = BytesIO(data)
-        try:
-            file.seek(0)
-        except Exception:
-            pass
-        return True
+        return data
 
     @classmethod
     def validate_process_request(cls, form_data, files):
@@ -99,31 +93,25 @@ class RequestValidator:
         validated['border'] = cls.validate_int(form_data.get('border', 2), 'border', min_val=0, max_val=20)
         
         # 2. Image collection (supports multi-image upload keys)
+        # images_data holds (img_bytes, copies) — bytes already read during validation
         images_data = []
         i = 0
         while f"image_{i}" in files:
-            img_file = files[f"image_{i}"]
-            if not cls.validate_image_file(img_file):
+            img_bytes = cls.validate_image_file(files[f"image_{i}"])
+            if not img_bytes:
                 raise ValidationError(
-                    f"File '{getattr(img_file, 'filename', '')}' is empty.",
-                    error_code="no_image_uploaded",
+                    f"image_{i} is empty.", error_code="no_image_uploaded"
                 )
-            
-            # Limit copies per image to keep PDF sizes manageable
             copies = cls.validate_int(form_data.get(f"copies_{i}", 6), f"copies_{i}", min_val=1, max_val=54)
-            images_data.append((img_file, copies))
+            images_data.append((img_bytes, copies))
             i += 1
-            
-        # Fallback to single image upload (legacy support)
+
         if not images_data and "image" in files:
-            img_file = files["image"]
-            if not cls.validate_image_file(img_file):
-                raise ValidationError(
-                    f"File '{getattr(img_file, 'filename', '')}' is empty.",
-                    error_code="no_image_uploaded",
-                )
+            img_bytes = cls.validate_image_file(files["image"])
+            if not img_bytes:
+                raise ValidationError("Uploaded image is empty.", error_code="no_image_uploaded")
             copies = cls.validate_int(form_data.get("copies", 6), "copies", min_val=1, max_val=54)
-            images_data.append((img_file, copies))
+            images_data.append((img_bytes, copies))
             
         if not images_data:
             raise ValidationError("No valid images were uploaded.", error_code="no_image_uploaded")

@@ -64,12 +64,7 @@ def process():
         validated = RequestValidator.validate_process_request(request.form, request.files)
         
         passport_images = []
-        for img_file, copies in validated['images_data']:
-            logger.debug(f"Processing image: {img_file.filename}")
-            
-            # The service handles removal and enhancement through the pipeline
-            # Note: The raw bytes are read here, ensure the image service closes its internal handles
-            img_bytes = img_file.read()
+        for img_bytes, copies in validated['images_data']:
             processed_img = current_app.image_service.process_single_image(img_bytes)
             passport_images.append((processed_img, copies))
 
